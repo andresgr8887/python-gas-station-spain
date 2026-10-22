@@ -296,6 +296,7 @@ async def get_price(
 
 
 def get_products() -> list[Product]:
+    """Return stable product IDs used by existing HA entities."""
     return list(_PRODUCTS.values())
 
 

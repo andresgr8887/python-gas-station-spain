@@ -23,10 +23,10 @@ jobs:
           python-version: ${{ env.DEFAULT_PYTHON }}
 
       - name: 🏗 Install dependencies
-        run: uv sync --frozen --dev
+        run: uv sync --dev
 
       - name: 🚀 Run ruff linter
         run: uv run ruff check --output-format=github .
 
       - name: 🚀 Run ruff formatter
-        run: uv run ruff format --check .
+        run: uv run ruff format --check --diff .

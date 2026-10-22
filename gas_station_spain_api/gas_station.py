@@ -231,6 +231,7 @@ async def _station_records(
     province_id: int | None = None,
     municipality_id: int | None = None,
 ) -> list[dict]:
+    """Fetch station records for a bounded geographic area."""
     if municipality_id is not None:
         url = f"{STATIONS_URL}/FiltroMunicipio/{int(municipality_id)}"
     elif province_id is not None:
@@ -247,6 +248,7 @@ async def _station_records(
 
 
 def _get_product_price(data: dict, product_id: int) -> float | None:
+    """Return a numeric price from XML-escaped or human-readable JSON keys."""
     field = PRODUCT_FIELDS[int(product_id)]
     value = data.get(field)
     if value is None:

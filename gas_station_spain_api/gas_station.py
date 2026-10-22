@@ -1,66 +1,65 @@
-"""Gas Station Spain"""
+"""Read Spanish fuel prices from the Ministry's public REST API.
 
+All methods preserve the original gas_station_spain_api public surface.
+Responses are cached by geographical filter so several HA sensors share requests.
+"""
+
+import asyncio
 from dataclasses import dataclass
 import os
-import ssl
 from pathlib import Path
+import ssl
+import time
+from typing import Any
 
 import aiohttp
-import tenacity
-from tenacity import stop_after_attempt, wait_fixed
 
 from .exceptions import GasStationServerUnavailableException
 
-_STATIONS_ENDPOINT = "https://geoportalgasolineras.es/geoportal/rest/busquedaEstaciones"
-_STATION_ENDPOINT = (
-    "https://geoportalgasolineras.es/geoportal/rest/{}/busquedaEstacionPrecio"
-)
-_PROVINCES_ENDPOINT = "https://geoportalgasolineras.es/geoportal/rest/getProvincias"
-_MUNICIPALITIES_ENDPOINT = (
-    "https://geoportalgasolineras.es/geoportal/rest/getMunicipios"
-)
 
+BASE_URL = (
+    "https://sedeaplicaciones.minetur.gob.es/"
+    "ServiciosRESTCarburantes/PreciosCarburantes"
+)
+STATIONS_URL = f"{BASE_URL}/EstacionesTerrestres"
+LISTS_URL = f"{BASE_URL}/Listados"
+CACHE_SECONDS = 3600
 _EXTRA_CA_ENV = "GAS_STATION_SPAIN_EXTRA_CA"
 _EXTRA_CA_FILENAME = "ACComponentesInformaticos.pem"
 _DEFAULT_CERT_PATH = Path(__file__).resolve().parent / "certs" / _EXTRA_CA_FILENAME
 
 
 def _build_ssl_context() -> ssl.SSLContext:
+    """Use system CA trust, with an optional supplemental certificate."""
     context = ssl.create_default_context()
-
-    candidates: list[Path] = []
-
-    env_value = os.environ.get(_EXTRA_CA_ENV)
-    if env_value:
-        candidates.append(Path(env_value).expanduser())
-
+    candidates = []
+    if os.environ.get(_EXTRA_CA_ENV):
+        candidates.append(Path(os.environ[_EXTRA_CA_ENV]).expanduser())
     if _DEFAULT_CERT_PATH.exists():
         candidates.append(_DEFAULT_CERT_PATH)
-
     for candidate in candidates:
         try:
             context.load_verify_locations(cafile=str(candidate))
         except OSError:
-            # If the file cannot be read we keep the default trust store.
             continue
-
     return context
-
-
-def _create_session(headers: dict[str, str]) -> aiohttp.ClientSession:
-    """Factory for ClientSession instances with the custom CA chain."""
-
-    connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
-    return aiohttp.ClientSession(headers=headers, connector=connector)
 
 
 _SSL_CONTEXT = _build_ssl_context()
 
 
+def _create_session(headers: dict[str, str]) -> aiohttp.ClientSession:
+    """Create a bounded session; _fetch_json always closes it."""
+    return aiohttp.ClientSession(
+        headers=headers,
+        connector=aiohttp.TCPConnector(ssl=_SSL_CONTEXT),
+        timeout=aiohttp.ClientTimeout(total=25),
+    )
+
+
 @dataclass
 class Product:
-    """Product."""
-
+    """Petroleum product."""
     id: int
     name: str
     code: str
@@ -69,7 +68,6 @@ class Product:
 @dataclass
 class Province:
     """Province."""
-
     id: str
     name: str
 
@@ -77,7 +75,6 @@ class Province:
 @dataclass
 class Municipality:
     """Municipality."""
-
     id: str
     name: str
 
@@ -110,10 +107,52 @@ _PRODUCTS = {
 }
 
 
+# Public REST data fields do not match the historic Geoportal's API keys.
+PRODUCT_FIELDS = {
+    1: "Precio Gasolina 95 E5",
+    3: "Precio Gasolina 98 E5",
+    4: "Precio Gasoleo A",
+    5: "Precio Gasoleo Premium",
+    6: "Precio Gasoleo B",
+    7: "Precio Gasoleo C",
+    8: "Precio Biodiesel",
+    16: "Precio Bioetanol",
+    17: "Precio Gases licuados del petróleo",
+    18: "Precio Gas Natural Comprimido",
+    19: "Precio Gas Natural Licuado",
+    20: "Precio Gasolina 95 E5 Premium",
+    21: "Precio Gasolina 98 E10",
+    22: "Precio Hidrogeno",
+    23: "Precio Gasolina 95 E10",
+    24: "Precio Gasolina 95 E25",
+    25: "Precio Gasolina 95 E85",
+    26: "Precio Adblue",
+    27: "Precio Diésel Renovable",
+    28: "Precio Gasolina Renovable",
+    29: "Precio Metanol",
+    30: "Precio Amoniaco",
+    31: "Precio Biogas Natural Comprimido",
+    32: "Precio Biogas Natural Licuado",
+}
+
+# Entries are shared between coordinators within the same HA event loop.
+_cache: dict[str, tuple[float, Any]] = {}
+_cache_locks: dict[str, asyncio.Lock] = {}
+
+
+def _decimal(value: Any) -> float | None:
+    """Parse numbers from the API's Spanish decimal notation."""
+    if value is None or str(value).strip() in ("", "-"):
+        return None
+    try:
+        return float(str(value).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class GasStation:
-    """Gas Station Information."""
-
+    """Station information; station IDs are preserved across HA upgrades."""
     id: int
     marquee: str
     address: str
@@ -124,131 +163,137 @@ class GasStation:
 
     @staticmethod
     def from_list(data: dict) -> "GasStation":
-        """Create GasStation from a dictionary."""
+        """Parse the Ministry's station fields."""
         return GasStation(
-            id=data["id"],
-            marquee=data["rotulo"].title(),
-            address=data["direccion"],
-            province=data["provincia"],
-            latitude=data["coordenadaY_dec"],
-            longitude=data["coordenadaX_dec"],
-            municipality=data["localidad"].strip().title(),
+            id=int(data["IDEESS"]),
+            marquee=str(data.get("Rótulo") or "").strip().title(),
+            address=str(data.get("Dirección") or "").strip(),
+            province=str(data.get("Provincia") or "").strip(),
+            latitude=_decimal(data.get("Latitud")),
+            longitude=_decimal(data.get("Longitud (WGS84)")),
+            municipality=str(data.get("Municipio") or "").strip().title(),
         )
 
     @staticmethod
     def from_individual(data: dict) -> "GasStation":
-        """Create GasStation from a dictionary."""
-        return GasStation(
-            id=data["eessId"],
-            marquee=data["rotulo"].title(),
-            address=data["direccion"],
-            province=data["provincia"],
-            latitude=data["coordenadaY"],
-            longitude=data["coordenadaX"],
-            municipality=data["localidad"].strip().title(),
-        )
+        """Keep the former API's entry point for callers."""
+        return GasStation.from_list(data)
 
 
-@tenacity.retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
+async def _fetch_json(url: str) -> Any:
+    """Fetch JSON, closing the HTTP response and session even on exceptions.
+
+    Retry timeouts, connection errors and HTTP 5xx; never retry HTTP 4xx.
+    """
+    for attempt in range(3):
+        session = _create_session({"Accept": "application/json"})
+        try:
+            response = await session.get(url)
+            try:
+                if response.status >= 500:
+                    raise GasStationServerUnavailableException(response.status)
+                response.raise_for_status()
+                return await response.json()
+            finally:
+                response.release()
+        except (GasStationServerUnavailableException, aiohttp.ClientConnectionError, asyncio.TimeoutError):
+            if attempt == 2:
+                raise
+            await asyncio.sleep(2)
+        finally:
+            await session.close()
+    raise RuntimeError("Unexpected retry state")
+
+
+async def _cached_json(url: str) -> Any:
+    """Deduplicate in-flight requests and cache only successful responses."""
+    cached = _cache.get(url)
+    if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
+        return cached[1]
+    lock = _cache_locks.setdefault(url, asyncio.Lock())
+    async with lock:
+        cached = _cache.get(url)
+        if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
+            return cached[1]
+        data = await _fetch_json(url)
+        _cache[url] = (time.monotonic(), data)
+        return data
+
+
+async def _station_records(
+    province_id: int | None = None,
+    municipality_id: int | None = None,
+) -> list[dict]:
+    if municipality_id is not None:
+        url = f"{STATIONS_URL}/FiltroMunicipio/{int(municipality_id)}"
+    elif province_id is not None:
+        url = f"{STATIONS_URL}/FiltroProvincia/{int(province_id)}"
+    else:
+        url = f"{STATIONS_URL}/"
+    data = await _cached_json(url)
+    if not isinstance(data, dict) or not isinstance(data.get("ListaEESSPrecio"), list):
+        raise ValueError("Unexpected Ministry station response")
+    return data["ListaEESSPrecio"]
+
+
+def _get_product_price(data: dict, product_id: int) -> float | None:
+    field = PRODUCT_FIELDS[int(product_id)]
+    return _decimal(data.get(field))
+
+
 async def get_gas_stations(
     province_id: int | None = None,
     municipality_id: int | None = None,
     product_id: int | None = None,
 ) -> list[GasStation]:
-    """Get gas stations with optionals filters."""
-
-    headers = {"Accept": "application/json"}
-    session = _create_session(headers=headers)
-    response = await session.post(
-        _STATIONS_ENDPOINT,
-        json={
-            "tipoEstacion": "EESS",
-            "idProvincia": province_id,
-            "idMunicipio": municipality_id,
-            "idProducto": product_id,
-        },
-    )
-
-    if response.status >= 500:
-        await session.close()
-        raise GasStationServerUnavailableException(response.status)
-
-    data = await response.json()
-    await session.close()
-    return [GasStation.from_list(s["estacion"]) for s in data["estaciones"]]
+    """Filter stations; use the same cached municipality data for all products."""
+    records = await _station_records(province_id, municipality_id)
+    if product_id is not None:
+        records = [r for r in records if _get_product_price(r, product_id) is not None]
+    return [GasStation.from_list(record) for record in records]
 
 
-@tenacity.retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-async def get_price(station_id, product_id) -> float:
-    """Get the actual product price in selected station."""
-
-    headers = {"Accept": "application/json"}
-    session = _create_session(headers=headers)
-    response = await session.get(_STATION_ENDPOINT.format(station_id))
-
-    if response.status >= 500:
-        await session.close()
-        raise GasStationServerUnavailableException(response.status)
-
-    data = await response.json()
-    product = _PRODUCTS[product_id]
-    await session.close()
-    return data[f"precio{product.code}"]
+async def get_gas_station(
+    station_id: int, municipality_id: int | None = None,
+) -> GasStation:
+    """Read a station using its municipality, or fall back to the national list."""
+    records = await _station_records(municipality_id=municipality_id)
+    match = next((r for r in records if int(r["IDEESS"]) == int(station_id)), None)
+    if match is None:
+        raise LookupError(f"Station {station_id} was not found in the Ministry data")
+    return GasStation.from_individual(match)
 
 
-@tenacity.retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-async def get_gas_station(station_id) -> GasStation:
-    """Get gas station by id."""
-
-    headers = {"Accept": "application/json"}
-    session = _create_session(headers=headers)
-    response = await session.get(_STATION_ENDPOINT.format(station_id))
-
-    if response.status >= 500:
-        await session.close()
-        raise GasStationServerUnavailableException(response.status)
-
-    data = await response.json()
-    await session.close()
-    return GasStation.from_individual(data)
+async def get_price(
+    station_id: int, product_id: int, municipality_id: int | None = None,
+) -> float | None:
+    """Price in euros; None means the product is absent or unpriced."""
+    records = await _station_records(municipality_id=municipality_id)
+    match = next((r for r in records if int(r["IDEESS"]) == int(station_id)), None)
+    if match is None:
+        raise LookupError(f"Station {station_id} was not found in the Ministry data")
+    return _get_product_price(match, product_id)
 
 
 def get_products() -> list[Product]:
-    """Get product list."""
     return list(_PRODUCTS.values())
 
 
-@tenacity.retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
 async def get_provinces() -> list[Province]:
-    """Get provinces list."""
-
-    headers = {"Accept": "application/json"}
-    session = _create_session(headers=headers)
-    response = await session.get(_PROVINCES_ENDPOINT)
-
-    if response.status >= 500:
-        await session.close()
-        raise GasStationServerUnavailableException(response.status)
-
-    data = await response.json()
-    await session.close()
-    return [Province(id=p["id"], name=p["nombre"].title()) for p in data["provincias"]]
+    payload = await _cached_json(f"{LISTS_URL}/Provincias/")
+    if not isinstance(payload, list):
+        raise ValueError("Unexpected Ministry province list")
+    return [
+        Province(id=str(p.get("IDPovincia", p.get("IDProvincia"))), name=p["Provincia"].title())
+        for p in payload
+    ]
 
 
-@tenacity.retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
 async def get_municipalities(id_province: str) -> list[Municipality]:
-    """Get municipalities list."""
-
-    headers = {"Accept": "application/json"}
-    session = _create_session(headers=headers)
-    response = await session.post(
-        _MUNICIPALITIES_ENDPOINT, data={"idProvincia": id_province}
-    )
-
-    if response.status >= 500:
-        await session.close()
-        raise GasStationServerUnavailableException(response.status)
-
-    data = await response.json()
-    await session.close()
-    return [Municipality(id=p["id"], name=p["desMunicipio"]) for p in data]
+    payload = await _cached_json(f"{LISTS_URL}/MunicipiosPorProvincia/{int(id_province)}")
+    if not isinstance(payload, list):
+        raise ValueError("Unexpected Ministry municipality list")
+    return [
+        Municipality(id=str(m["IDMunicipio"]), name=m["Municipio"].strip().title())
+        for m in payload
+    ]

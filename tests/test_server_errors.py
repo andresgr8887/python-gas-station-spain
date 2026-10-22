@@ -1,4 +1,4 @@
-# pylint: disable=protected-access,unused-argument,missing-function-docstring,missing-class-docstring
+# pylint: disable=protected-access,unused-argument,missing-function-docstring,missing-class-docstring,redefined-outer-name
 """HTTP failures are classified and connections are always released."""
 
 import asyncio

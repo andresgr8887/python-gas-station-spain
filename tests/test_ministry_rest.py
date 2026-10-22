@@ -1,3 +1,4 @@
+# pylint: disable=protected-access,unused-argument
 """Offline regression tests for the Ministry's official fuel prices format."""
 
 import pytest

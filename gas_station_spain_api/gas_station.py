@@ -109,30 +109,30 @@ _PRODUCTS = {
 
 # Public REST data fields do not match the historic Geoportal's API keys.
 PRODUCT_FIELDS = {
-    1: "Precio Gasolina 95 E5",
-    3: "Precio Gasolina 98 E5",
-    4: "Precio Gasoleo A",
-    5: "Precio Gasoleo Premium",
-    6: "Precio Gasoleo B",
-    7: "Precio Gasoleo C",
-    8: "Precio Biodiesel",
-    16: "Precio Bioetanol",
-    17: "Precio Gases licuados del petróleo",
-    18: "Precio Gas Natural Comprimido",
-    19: "Precio Gas Natural Licuado",
-    20: "Precio Gasolina 95 E5 Premium",
-    21: "Precio Gasolina 98 E10",
-    22: "Precio Hidrogeno",
-    23: "Precio Gasolina 95 E10",
-    24: "Precio Gasolina 95 E25",
-    25: "Precio Gasolina 95 E85",
-    26: "Precio Adblue",
-    27: "Precio Diésel Renovable",
-    28: "Precio Gasolina Renovable",
-    29: "Precio Metanol",
-    30: "Precio Amoniaco",
-    31: "Precio Biogas Natural Comprimido",
-    32: "Precio Biogas Natural Licuado",
+    1: "Precio_x0020_Gasolina_x0020_95_x0020_E5",
+    3: "Precio_x0020_Gasolina_x0020_98_x0020_E5",
+    4: "Precio_x0020_Gasoleo_x0020_A",
+    5: "Precio_x0020_Gasoleo_x0020_Premium",
+    6: "Precio_x0020_Gasoleo_x0020_B",
+    7: "Precio_x0020_Gasoleo_x0020_C",
+    8: "Precio_x0020_Biodiesel",
+    16: "Precio_x0020_Bioetanol",
+    17: "Precio_x0020_Gases_x0020_licuados_x0020_del_x0020_petróleo",
+    18: "Precio_x0020_Gas_x0020_Natural_x0020_Comprimido",
+    19: "Precio_x0020_Gas_x0020_Natural_x0020_Licuado",
+    20: "Precio_x0020_Gasolina_x0020_95_x0020_E5_x0020_Premium",
+    21: "Precio_x0020_Gasolina_x0020_98_x0020_E10",
+    22: "Precio_x0020_Hidrogeno",
+    23: "Precio_x0020_Gasolina_x0020_95_x0020_E10",
+    24: "Precio_x0020_Gasolina_x0020_95_x0020_E25",
+    25: "Precio_x0020_Gasolina_x0020_95_x0020_E85",
+    26: "Precio_x0020_Adblue",
+    27: "Precio_x0020_Diésel_x0020_Renovable",
+    28: "Precio_x0020_Gasolina_x0020_Renovable",
+    29: "Precio_x0020_Metanol",
+    30: "Precio_x0020_Amoniaco",
+    31: "Precio_x0020_Biogas_x0020_Natural_x0020_Comprimido",
+    32: "Precio_x0020_Biogas_x0020_Natural_x0020_Licuado",
 }
 
 # Entries are shared between coordinators within the same HA event loop.
@@ -170,7 +170,10 @@ class GasStation:
             address=str(data.get("Dirección") or "").strip(),
             province=str(data.get("Provincia") or "").strip(),
             latitude=_decimal(data.get("Latitud")),
-            longitude=_decimal(data.get("Longitud (WGS84)")),
+            longitude=_decimal(
+                data.get("Longitud_x0020__x0028_WGS84_x0029_")
+                or data.get("Longitud (WGS84)")
+            ),
             municipality=str(data.get("Municipio") or "").strip().title(),
         )
 
@@ -196,7 +199,11 @@ async def _fetch_json(url: str) -> Any:
                 return await response.json()
             finally:
                 response.release()
-        except (GasStationServerUnavailableException, aiohttp.ClientConnectionError, asyncio.TimeoutError):
+        except (
+            GasStationServerUnavailableException,
+            aiohttp.ClientConnectionError,
+            asyncio.TimeoutError,
+        ):
             if attempt == 2:
                 raise
             await asyncio.sleep(2)
@@ -229,7 +236,10 @@ async def _station_records(
     elif province_id is not None:
         url = f"{STATIONS_URL}/FiltroProvincia/{int(province_id)}"
     else:
-        url = f"{STATIONS_URL}/"
+        raise ValueError(
+            "A municipality_id or province_id is required; national downloads "
+            "are deliberately disabled."
+        )
     data = await _cached_json(url)
     if not isinstance(data, dict) or not isinstance(data.get("ListaEESSPrecio"), list):
         raise ValueError("Unexpected Ministry station response")
@@ -238,7 +248,11 @@ async def _station_records(
 
 def _get_product_price(data: dict, product_id: int) -> float | None:
     field = PRODUCT_FIELDS[int(product_id)]
-    return _decimal(data.get(field))
+    value = data.get(field)
+    if value is None:
+        # Accommodate legacy responses which decode XML escape sequences.
+        value = data.get(field.replace("_x0020_", " "))
+    return _decimal(value)
 
 
 async def get_gas_stations(
@@ -256,7 +270,9 @@ async def get_gas_stations(
 async def get_gas_station(
     station_id: int, municipality_id: int | None = None,
 ) -> GasStation:
-    """Read a station using its municipality, or fall back to the national list."""
+    """Read a station within its municipality; never download the whole country."""
+    if municipality_id is None:
+        raise ValueError("municipality_id is required for station lookup")
     records = await _station_records(municipality_id=municipality_id)
     match = next((r for r in records if int(r["IDEESS"]) == int(station_id)), None)
     if match is None:
@@ -268,6 +284,8 @@ async def get_price(
     station_id: int, product_id: int, municipality_id: int | None = None,
 ) -> float | None:
     """Price in euros; None means the product is absent or unpriced."""
+    if municipality_id is None:
+        raise ValueError("municipality_id is required for price lookup")
     records = await _station_records(municipality_id=municipality_id)
     match = next((r for r in records if int(r["IDEESS"]) == int(station_id)), None)
     if match is None:
@@ -280,20 +298,30 @@ def get_products() -> list[Product]:
 
 
 async def get_provinces() -> list[Province]:
+    """Return official province identifiers and names."""
     payload = await _cached_json(f"{LISTS_URL}/Provincias/")
     if not isinstance(payload, list):
         raise ValueError("Unexpected Ministry province list")
     return [
-        Province(id=str(p.get("IDPovincia", p.get("IDProvincia"))), name=p["Provincia"].title())
+        Province(
+            id=str(p.get("IDPovincia", p.get("IDProvincia"))),
+            name=p["Provincia"].title(),
+        )
         for p in payload
     ]
 
 
 async def get_municipalities(id_province: str) -> list[Municipality]:
-    payload = await _cached_json(f"{LISTS_URL}/MunicipiosPorProvincia/{int(id_province)}")
+    """Return municipalities in the province using official IDs."""
+    payload = await _cached_json(
+        f"{LISTS_URL}/MunicipiosPorProvincia/{int(id_province)}"
+    )
     if not isinstance(payload, list):
         raise ValueError("Unexpected Ministry municipality list")
     return [
-        Municipality(id=str(m["IDMunicipio"]), name=m["Municipio"].strip().title())
+        Municipality(
+            id=str(m["IDMunicipio"]),
+            name=m["Municipio"].strip().title(),
+        )
         for m in payload
     ]

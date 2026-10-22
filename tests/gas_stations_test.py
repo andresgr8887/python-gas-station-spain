@@ -1,4 +1,4 @@
-# pylint: disable=protected-access,unused-argument,missing-function-docstring,missing-class-docstring
+# pylint: disable=protected-access,unused-argument,missing-function-docstring,missing-class-docstring,redefined-outer-name
 """Deterministic tests of Spain's official fuel data API (no live HTTP)."""
 
 from unittest.mock import AsyncMock

@@ -1,4 +1,4 @@
-# pylint: disable=protected-access,unused-argument
+# pylint: disable=protected-access,unused-argument,missing-function-docstring,missing-class-docstring
 """Offline regression tests for the Ministry's official fuel prices format."""
 
 import pytest

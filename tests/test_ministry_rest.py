@@ -13,9 +13,9 @@ STATION = {
     "Provincia": "SEVILLA",
     "Municipio": "SAN JOSÉ DE LA RINCONADA",
     "Latitud": "37,50223",
-    "Longitud (WGS84)": "-5,98247",
-    "Precio Gasolina 95 E5": "1,459",
-    "Precio Gasoleo A": "",
+    "Longitud_x0020__x0028_WGS84_x0029_": "-5,98247",
+    "Precio_x0020_Gasolina_x0020_95_x0020_E5": "1,459",
+    "Precio_x0020_Gasoleo_x0020_A": "",
 }
 
 

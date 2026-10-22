@@ -234,7 +234,7 @@ async def _station_records(
     if municipality_id is not None:
         url = f"{STATIONS_URL}/FiltroMunicipio/{int(municipality_id)}"
     elif province_id is not None:
-        url = f"{STATIONS_URL}/FiltroProvincia/{int(province_id)}"
+        url = f"{STATIONS_URL}/FiltroProvincia/{int(province_id):02d}"
     else:
         raise ValueError(
             "A municipality_id or province_id is required; national downloads "
@@ -314,7 +314,7 @@ async def get_provinces() -> list[Province]:
 async def get_municipalities(id_province: str) -> list[Municipality]:
     """Return municipalities in the province using official IDs."""
     payload = await _cached_json(
-        f"{LISTS_URL}/MunicipiosPorProvincia/{int(id_province)}"
+        f"{LISTS_URL}/MunicipiosPorProvincia/{int(id_province):02d}"
     )
     if not isinstance(payload, list):
         raise ValueError("Unexpected Ministry municipality list")

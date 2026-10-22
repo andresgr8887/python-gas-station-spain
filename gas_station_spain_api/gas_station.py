@@ -60,6 +60,7 @@ def _create_session(headers: dict[str, str]) -> aiohttp.ClientSession:
 @dataclass
 class Product:
     """Petroleum product."""
+
     id: int
     name: str
     code: str
@@ -68,6 +69,7 @@ class Product:
 @dataclass
 class Province:
     """Province."""
+
     id: str
     name: str
 
@@ -75,6 +77,7 @@ class Province:
 @dataclass
 class Municipality:
     """Municipality."""
+
     id: str
     name: str
 
@@ -153,6 +156,7 @@ def _decimal(value: Any) -> float | None:
 @dataclass
 class GasStation:
     """Station information; station IDs are preserved across HA upgrades."""
+
     id: int
     marquee: str
     address: str
@@ -270,7 +274,8 @@ async def get_gas_stations(
 
 
 async def get_gas_station(
-    station_id: int, municipality_id: int | None = None,
+    station_id: int,
+    municipality_id: int | None = None,
 ) -> GasStation:
     """Read a station within its municipality; never download the whole country."""
     if municipality_id is None:
@@ -283,7 +288,9 @@ async def get_gas_station(
 
 
 async def get_price(
-    station_id: int, product_id: int, municipality_id: int | None = None,
+    station_id: int,
+    product_id: int,
+    municipality_id: int | None = None,
 ) -> float | None:
     """Price in euros; None means the product is absent or unpriced."""
     if municipality_id is None:

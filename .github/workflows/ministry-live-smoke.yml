@@ -1,0 +1,52 @@
+name: Ministry API live smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/official-fuel-api]
+    paths:
+      - .github/workflows/ministry-live-smoke.yml
+
+jobs:
+  limited-live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install project
+        run: uv sync --dev
+      - name: Probe one municipality and one price using one cached request
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          from gas_station_spain_api import get_gas_stations, get_price
+
+          async def main():
+              # Rioja (Almeria) is a known municipality in the original tests.
+              # This deliberately avoids the Ministry's large national listing.
+              stations = await asyncio.wait_for(
+                  get_gas_stations(municipality_id=355), timeout=100
+              )
+              print("Official municipality 355 station count:", len(stations))
+              assert stations, "Official municipality returned no stations"
+              print("First station ID:", stations[0].id)
+              for station in stations:
+                  for product in (1, 4):
+                      price = await get_price(
+                          station.id, product, municipality_id=355
+                      )
+                      if price is not None:
+                          print(
+                              "Confirmed live fuel:",
+                              station.id, product, price, "EUR"
+                          )
+                          assert 0.2 < price < 5.0
+                          return
+              raise AssertionError(
+                  "Official service returned stations but no valid prices"
+              )
+
+          asyncio.run(main())
+          PY

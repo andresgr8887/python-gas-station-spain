@@ -38,18 +38,10 @@ ALICANTE = {
 def ministry_data(monkeypatch):
     """Serve realistic API structures entirely from memory."""
     results = {
-        f"{api.STATIONS_URL}/FiltroProvincia/04": {
-            "ListaEESSPrecio": [STATION]
-        },
-        f"{api.STATIONS_URL}/FiltroProvincia/03": {
-            "ListaEESSPrecio": [ALICANTE]
-        },
-        f"{api.STATIONS_URL}/FiltroMunicipio/355": {
-            "ListaEESSPrecio": [STATION]
-        },
-        f"{api.STATIONS_URL}/FiltroMunicipio/256": {
-            "ListaEESSPrecio": [ALICANTE]
-        },
+        f"{api.STATIONS_URL}/FiltroProvincia/04": {"ListaEESSPrecio": [STATION]},
+        f"{api.STATIONS_URL}/FiltroProvincia/03": {"ListaEESSPrecio": [ALICANTE]},
+        f"{api.STATIONS_URL}/FiltroMunicipio/355": {"ListaEESSPrecio": [STATION]},
+        f"{api.STATIONS_URL}/FiltroMunicipio/256": {"ListaEESSPrecio": [ALICANTE]},
         f"{api.LISTS_URL}/Provincias/": [
             {"IDPovincia": "04", "Provincia": "ALMERÍA"},
             {"IDPovincia": "03", "Provincia": "ALICANTE"},
@@ -69,9 +61,7 @@ async def test_get_by_province(ministry_data):
     stations = await gss.get_gas_stations(province_id=4)
     assert len(stations) == 1
     assert stations[0].province == "ALMERÍA"
-    ministry_data.assert_awaited_with(
-        f"{api.STATIONS_URL}/FiltroProvincia/04"
-    )
+    ministry_data.assert_awaited_with(f"{api.STATIONS_URL}/FiltroProvincia/04")
 
 
 @pytest.mark.asyncio
@@ -84,21 +74,15 @@ async def test_second_province(ministry_data):
 @pytest.mark.asyncio
 async def test_get_by_municipality(ministry_data):
     """Filter by official municipality identifier."""
-    stations = await gss.get_gas_stations(
-        province_id=4, municipality_id=355
-    )
+    stations = await gss.get_gas_stations(province_id=4, municipality_id=355)
     assert [s.id for s in stations] == [6738]
 
 
 @pytest.mark.asyncio
 async def test_product_filter_and_price(ministry_data):
     """Filter stations to fuels having a reported price."""
-    available = await gss.get_gas_stations(
-        municipality_id=355, product_id=1
-    )
-    missing = await gss.get_gas_stations(
-        municipality_id=355, product_id=5
-    )
+    available = await gss.get_gas_stations(municipality_id=355, product_id=1)
+    missing = await gss.get_gas_stations(municipality_id=355, product_id=5)
     assert len(available) == 1
     assert not missing
     assert await gss.get_price(6738, 1, municipality_id=355) == 1.459

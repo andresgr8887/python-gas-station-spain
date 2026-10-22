@@ -107,3 +107,11 @@ async def test_deduplicates_cached_requests(monkeypatch):
     second = await api._cached_json("test-cache-url")
     assert first == second
     assert len(calls) == 1
+
+
+def test_decoded_field_compatibility_and_invalid_prices():
+    """Validate historic decoded keys and reject nonnumeric prices."""
+    assert api._get_product_price({"Precio Gasolina 95 E5": "1,629"}, 1) == 1.629
+    assert api._get_product_price({}, 1) is None
+    assert api._decimal("no disponible") is None
+    assert api._decimal(None) is None

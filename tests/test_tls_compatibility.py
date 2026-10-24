@@ -19,7 +19,7 @@ def test_tls_policy_preserves_verification_and_default_ciphers():
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname
     assert context.minimum_version == default.minimum_version
-    assert context.minimum_version >= ssl.TLSVersion.TLSv1_2
+    assert context.options == default.options
     assert context.security_level == default.security_level
 
 
@@ -103,6 +103,9 @@ async def test_rsa_only_server_reproduces_reset_and_fixed_client_succeeds(
     loop.set_exception_handler(expected_handshake_failure)
     try:
         original = ssl.create_default_context(cafile=str(cert))
+        # Some distro Python builds already allow static RSA. Explicitly model
+        # the forward-secret TLS 1.2 policy of the affected HA runtime.
+        original.set_ciphers("ECDHE-RSA-AES256-GCM-SHA384")
         with pytest.raises(aiohttp.ClientConnectionError):
             await request(original)
         fixed = api._build_ssl_context()

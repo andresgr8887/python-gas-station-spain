@@ -32,6 +32,13 @@ _DEFAULT_CERT_PATH = Path(__file__).resolve().parent / "certs" / _EXTRA_CA_FILEN
 def _build_ssl_context() -> ssl.SSLContext:
     """Use system CA trust, with an optional supplemental certificate."""
     context = ssl.create_default_context()
+    # The Ministry currently negotiates static RSA AES-GCM with TLS 1.2.
+    # Python's defaults only offer forward-secret TLS 1.2 suites, causing
+    # the peer to reset the handshake before certificate validation.
+    # Preserve the default suites and add only the observed compatible one.
+    # Certificate/hostname checks, TLS minimum and security level stay intact.
+    ciphers = [cipher["name"] for cipher in context.get_ciphers()]
+    context.set_ciphers(":".join([*ciphers, "AES256-GCM-SHA384"]))
     candidates = []
     if os.environ.get(_EXTRA_CA_ENV):
         candidates.append(Path(os.environ[_EXTRA_CA_ENV]).expanduser())

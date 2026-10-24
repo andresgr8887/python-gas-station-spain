@@ -342,4 +342,3 @@ async def get_municipalities(id_province: str) -> list[Municipality]:
         )
         for m in payload
     ]
-

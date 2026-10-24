@@ -1,3 +1,4 @@
+# pylint: disable=protected-access,redefined-outer-name,unused-argument,missing-function-docstring,wrong-import-order
 """Exercise the Ministry's TLS 1.2 RSA-only negotiation without external I/O."""
 
 import asyncio
